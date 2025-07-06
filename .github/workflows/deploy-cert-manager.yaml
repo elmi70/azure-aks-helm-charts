@@ -1,0 +1,256 @@
+name: Deploy cert-manager to AKS (Manual Trigger)
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: 'AKS cluster name'
+        required: true
+        type: string
+      cert_manager_version:
+        description: 'cert-manager version'
+        required: false
+        default: 'v1.18.0'
+        type: string
+      environment:
+        description: 'Deployment environment'
+        required: false
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+
+env:
+  TIMEOUT_MINUTES: 15
+
+# Prevent concurrent deployments to the same cluster
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.cluster_name || 'default' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-cert-manager:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    permissions:
+      id-token: write
+      contents: read
+      
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set deployment variables
+      run: |
+        # Prevent accidental output of secrets
+        set +x
+        
+        CERT_MANAGER_VERSION="${{ github.event.inputs.cert_manager_version || 'v1.18.0' }}"
+        CLUSTER_NAME="${{ github.event.inputs.cluster_name }}"
+        
+        # Export variables for template substitution (sensitive values masked in logs)
+        # General Azure subscription info
+        AZURE_SUBSCRIPTION_ID="${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+        
+        # DNS configuration
+        AZURE_DNS_RESOURCE_GROUP="${{ vars.AZURE_DNS_RESOURCE_GROUP }}"
+        AZURE_DNS_ZONE="${{ vars.AZURE_DNS_ZONE }}"
+        
+        # Let's Encrypt configuration
+        LETSENCRYPT_EMAIL="${{ secrets.LETSENCRYPT_EMAIL }}"
+        
+        # Managed Identity for cert-manager to access Azure DNS
+        # IMPORTANT: In this deployment, the AZURE_CLIENT_ID and AZURE_WORKLOAD_IDENTITY_CLIENT_ID
+        # refer to the same managed identity, but used in two different contexts:
+        # 1. AZURE_CLIENT_ID - Used by GitHub Actions for azure/login authentication (workflow identity)
+        # 2. AZURE_WORKLOAD_IDENTITY_CLIENT_ID - Used by cert-manager for DNS challenges
+        #
+        # This identity needs permissions for both:
+        #   - Contributor role on the AKS cluster for deploying resources
+        #   - DNS Zone Contributor access for managing DNS records
+        #
+        # For better separation of concerns in production, consider using different identities.
+        AZURE_WORKLOAD_IDENTITY_CLIENT_ID="${{ secrets.AZURE_WORKLOAD_IDENTITY_CLIENT_ID }}"
+        
+        {
+          # Set GitHub environment variables (using subshell to prevent logging)
+          # Basic deployment config
+          echo "CERT_MANAGER_VERSION=$CERT_MANAGER_VERSION"
+          echo "CLUSTER_NAME=$CLUSTER_NAME"
+          
+          # Azure DNS configuration
+          echo "AZURE_SUBSCRIPTION_ID=$AZURE_SUBSCRIPTION_ID" 
+          echo "AZURE_DNS_RESOURCE_GROUP=$AZURE_DNS_RESOURCE_GROUP"
+          echo "AZURE_DNS_ZONE=$AZURE_DNS_ZONE"
+          
+          # Certificate configuration
+          echo "LETSENCRYPT_EMAIL=$LETSENCRYPT_EMAIL"
+          
+          # Managed identity for cert-manager (used in ClusterIssuer)
+          echo "AZURE_WORKLOAD_IDENTITY_CLIENT_ID=$AZURE_WORKLOAD_IDENTITY_CLIENT_ID"
+        } >> $GITHUB_ENV
+        
+        # Safely log non-sensitive values
+        echo "✅ Set cert-manager version: $CERT_MANAGER_VERSION"
+        echo "✅ Set cluster name: $CLUSTER_NAME"
+        echo "✅ Environment variables configured successfully"
+    
+    - name: Azure Login using Workload Identity
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    
+    - name: Get AKS credentials
+      run: |
+        az aks get-credentials \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --name $CLUSTER_NAME \
+          --overwrite-existing
+    
+    - name: Verify cluster connection
+      run: |
+        echo "🔗 Verifying cluster connection..."
+        kubectl get nodes --no-headers | wc -l | xargs echo "Connected to cluster with" "nodes"
+        echo "✅ Cluster connection verified"
+    
+    - name: Install Helm
+      uses: azure/setup-helm@v4.3.0
+      with:
+        version: 'v3.18.3'  
+      id: install-helm
+    
+    - name: Add Jetstack Helm repository
+      run: |
+        echo "📦 Adding Jetstack Helm repository..."
+        helm repo add jetstack https://charts.jetstack.io
+        helm repo update
+        echo "✅ Helm repository updated successfully"
+        helm version --short
+    
+    - name: Install cert-manager
+      run: |
+        echo "🚀 Installing cert-manager $CERT_MANAGER_VERSION..."
+        
+        # Install with error handling
+        set -e
+        if ! helm upgrade --install cert-manager jetstack/cert-manager \
+          --namespace cert-manager \
+          --create-namespace \
+          --version $CERT_MANAGER_VERSION \
+          --values ./charts/cert-manager/cert-manager-values.yaml \
+          --wait \
+          --timeout=10m; then
+          echo "❌ cert-manager installation failed"
+          echo "📄 Checking for issues..."
+          kubectl get events --sort-by=.metadata.creationTimestamp -n cert-manager
+          exit 1
+        fi
+        echo "✅ cert-manager installed successfully"
+    
+    - name: Create ClusterIssuer for Let's Encrypt
+      run: |
+        echo "🔑 Creating Let's Encrypt ClusterIssuer..."
+        
+        # Select the appropriate ClusterIssuer template based on environment
+        ENVIRONMENT="${{ github.event.inputs.environment || 'production' }}"
+        if [ "$ENVIRONMENT" == "production" ]; then
+          ISSUER_TEMPLATE="./charts/cert-manager/cluster-issuer.yaml"
+          ISSUER_NAME="letsencrypt-prod"
+        else
+          ISSUER_TEMPLATE="./charts/cert-manager/cluster-issuer-staging.yaml"
+          ISSUER_NAME="letsencrypt-staging"
+        fi
+        
+        echo "Using $ENVIRONMENT environment with issuer: $ISSUER_NAME"
+        
+        # Replace environment variables in the selected template (using subshell to prevent exposing secrets)
+        {
+          envsubst < $ISSUER_TEMPLATE > ./cluster-issuer-rendered.yaml
+        } 2>/dev/null
+        
+        echo "📄 Rendered ClusterIssuer configuration (sensitive values redacted):"
+        cat ./cluster-issuer-rendered.yaml | grep -v "email\|clientID\|subscriptionID\|resourceGroupName" | \
+          sed 's/\(subscriptionID:\).*$/\1 [REDACTED]/g' | \
+          sed 's/\(email:\).*$/\1 [REDACTED]/g' | \
+          sed 's/\(clientID:\).*$/\1 [REDACTED]/g' | \
+          sed 's/\(resourceGroupName:\).*$/\1 [REDACTED]/g'
+        
+        # Apply with error handling
+        if ! kubectl apply -f ./cluster-issuer-rendered.yaml; then
+          echo "❌ Failed to create ClusterIssuer"
+          exit 1
+        fi
+        
+        # Store the issuer name for later steps
+        echo "CERT_ISSUER_NAME=$ISSUER_NAME" >> $GITHUB_ENV
+        
+        # Clean up the rendered file
+        rm -f ./cluster-issuer-rendered.yaml
+        
+        # Check initial ClusterIssuer status
+        echo "⏳ Checking ClusterIssuer status..."
+        sleep 5
+        STATUS=$(kubectl get clusterissuer $CERT_ISSUER_NAME -o jsonpath='{.status.conditions[0].status}' 2>/dev/null || echo "NotFound")
+        TYPE=$(kubectl get clusterissuer $CERT_ISSUER_NAME -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || echo "Unknown")
+        echo "ClusterIssuer Status: $TYPE: $STATUS"
+        echo "Note: Full readiness may take a few minutes and will continue in the background"
+    
+    - name: Verify cert-manager installation
+      run: |
+        echo "🔍 Verifying cert-manager installation..."
+        
+        # Check all cert-manager pods are running
+        echo "Checking pod status..."
+        if ! kubectl wait --for=condition=Ready pods --all -n cert-manager --timeout=2m; then
+          echo "❌ Not all cert-manager pods are running!"
+          kubectl get pods -n cert-manager
+          exit 1
+        fi
+        
+        # Check that CRDs are installed by checking one essential CRD
+        if ! kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
+          echo "❌ Certificate CRD is missing!"
+          exit 1
+        fi
+        
+        echo "✅ cert-manager verification complete"
+    
+    - name: Verify cert-manager API
+      run: |
+        echo "🧪 Verifying cert-manager API..."
+        # Check API responsiveness
+        kubectl get --raw /apis/cert-manager.io/v1/clusterissuers >/dev/null
+        echo "✅ cert-manager API is responsive"
+    
+    - name: Create deployment summary
+      run: |
+        echo "## 🎉 cert-manager Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+        echo "- **cert-manager Version**: $CERT_MANAGER_VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "- **Cluster**: $CLUSTER_NAME" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: ${{ github.event.inputs.environment || 'production' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Issuer**: $CERT_ISSUER_NAME" >> $GITHUB_STEP_SUMMARY
+        echo "- **Azure Integration**:" >> $GITHUB_STEP_SUMMARY
+        echo "  - **Identity Configuration**: Using same managed identity for both workflow authentication and cert-manager" >> $GITHUB_STEP_SUMMARY
+        echo "  - **GitHub Workflow Identity**: AZURE_CLIENT_ID (used for deployment)" >> $GITHUB_STEP_SUMMARY
+        echo "  - **cert-manager Identity**: AZURE_WORKLOAD_IDENTITY_CLIENT_ID (used for DNS challenges)" >> $GITHUB_STEP_SUMMARY
+        echo "  - **Configuration Source**: ./charts/cert-manager/* files" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Deployed Components" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        kubectl get pods -n cert-manager >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. Test certificate issuance with a sample certificate" >> $GITHUB_STEP_SUMMARY
+        echo "2. Monitor ClusterIssuer status: \`kubectl get clusterissuer $CERT_ISSUER_NAME\`" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Cleanup
+      if: always()
+      run: rm -f ./*.yaml # Remove any temporary files
