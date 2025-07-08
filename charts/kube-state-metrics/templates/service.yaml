@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kube-state-metrics.fullname" . }}
+  namespace: {{ include "kube-state-metrics.namespace" . }}
+  labels:
+    {{- include "kube-state-metrics.labels" . | indent 4 }}
+  annotations:
+    {{- if .Values.prometheusScrape }}
+    prometheus.io/scrape: 'true'
+    {{- end }}
+    {{- with .Values.service.annotations }}
+    {{- toYaml . | indent 4 }}
+    {{- end }}
+spec:
+  type: {{ .Values.service.type | quote }}
+  ports:
+  - name: "http"
+    protocol: TCP
+    port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.port }}
+  selector:
+    {{- include "kube-state-metrics.selectorLabels" . | indent 4 }}

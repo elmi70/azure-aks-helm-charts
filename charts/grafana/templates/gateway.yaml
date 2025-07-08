@@ -1,0 +1,29 @@
+---
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: {{ include "grafana.fullname" . }}-gateway
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    istio: aks-istio-ingressgateway-external
+  servers:
+  # HTTP server - CRITICAL for ACME challenges
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - {{ .Values.ingress.host | quote }}
+  {{- if .Values.tls.enabled }}
+  # HTTPS server
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    - {{ .Values.ingress.host | quote }}
+    tls:
+      mode: SIMPLE
+      credentialName: {{ include "grafana.fullname" . }}-tls-secret
+  {{- end }}

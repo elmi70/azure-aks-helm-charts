@@ -1,0 +1,153 @@
+name: Package and Push Helm Charts to GHCR
+
+on:
+  workflow_dispatch:
+    inputs:
+      chart_name:
+        description: 'Helm Chart Name'
+        required: true
+        type: choice
+        options:
+          - grafana
+          - prometheus
+          - kube-state-metrics
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  select-chart:
+    runs-on: ubuntu-latest
+    outputs:
+      selected-chart: ${{ steps.select.outputs.selected-chart }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set selected chart
+      id: select
+      run: |
+        # Manual trigger - use selected chart from dropdown
+        SELECTED_CHART="${{ github.event.inputs.chart_name }}"
+        echo "📦 Selected chart: $SELECTED_CHART"
+        echo "selected-chart=$SELECTED_CHART" >> $GITHUB_OUTPUT
+
+  package-and-push:
+    needs: select-chart
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      packages: write
+      
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v4.3.0
+      with:
+        version: 'v3.18.3'
+
+    - name: Install yq
+      run: |
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/local/bin/yq
+
+    - name: Log in to GitHub Container Registry
+      run: |
+        echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
+
+    - name: Process charts
+      run: |
+        echo "📦 Processing chart: ${{ needs.select-chart.outputs.selected-chart }}"
+        
+        CHART="${{ needs.select-chart.outputs.selected-chart }}"
+        
+        echo ""
+        echo "🔄 Processing chart: $CHART"
+        echo "=================================="
+        
+        # Validate chart structure
+        if [ ! -d "charts/$CHART" ]; then
+          echo "❌ Chart directory charts/$CHART does not exist"
+          exit 1
+        fi
+        
+        if [ ! -f "charts/$CHART/Chart.yaml" ]; then
+          echo "❌ Chart.yaml not found in charts/$CHART"
+          exit 1
+        fi
+        
+        # Extract chart metadata
+        CHART_VERSION=$(yq '.version' charts/$CHART/Chart.yaml)
+        APP_VERSION=$(yq '.appVersion // "unknown"' charts/$CHART/Chart.yaml)
+        
+        if [ -z "$CHART_VERSION" ] || [ "$CHART_VERSION" == "null" ]; then
+          echo "❌ Chart version not found in Chart.yaml"
+          exit 1
+        fi
+        
+        echo "📊 Chart: $CHART v$CHART_VERSION (app: $APP_VERSION)"
+        
+        # Check if chart version already exists
+        if helm pull "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts/$CHART" --version "$CHART_VERSION" --destination /tmp 2>/dev/null; then
+          echo "⏭️  Skipping $CHART:$CHART_VERSION (already exists in registry)"
+          exit 0
+        fi
+        
+        # Lint and package chart
+        echo "🔍 Linting and packaging chart: $CHART"
+        if ! helm lint charts/$CHART; then
+          echo "❌ Chart linting failed for $CHART"
+          exit 1
+        fi
+        
+        mkdir -p packages
+        if ! helm package charts/$CHART --destination packages/; then
+          echo "❌ Chart packaging failed for $CHART"
+          exit 1
+        fi
+        
+        # Push to registry
+        PACKAGE_FILE="packages/$CHART-$CHART_VERSION.tgz"
+        echo "🚀 Pushing chart to registry..."
+        
+        if ! helm push "$PACKAGE_FILE" "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts"; then
+          echo "❌ Chart push failed for $CHART"
+          exit 1
+        fi
+        
+        echo "✅ Successfully processed $CHART:$CHART_VERSION"
+
+  summary:
+    needs: [select-chart, package-and-push]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - name: Create summary
+      run: |
+        echo "## 📦 Helm Chart Packaging Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Registry: ${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        CHART="${{ needs.select-chart.outputs.selected-chart }}"
+        
+        if [ "${{ needs.package-and-push.result }}" == "success" ]; then
+          echo "### Result: ✅ Successfully packaged" >> $GITHUB_STEP_SUMMARY
+          echo "- **$CHART** - Successfully processed and pushed to registry" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ needs.package-and-push.result }}" == "failure" ]; then
+          echo "### Result: ❌ Packaging failed" >> $GITHUB_STEP_SUMMARY
+          echo "- **$CHART** - Failed to process (check logs for details)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "### Result: ⏭️ Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "- **$CHART** - Skipped (likely already exists in registry)" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Quick Commands:" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "# Pull this chart" >> $GITHUB_STEP_SUMMARY
+        echo "helm pull oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts/$CHART --version VERSION" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY

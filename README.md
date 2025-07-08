@@ -1,40 +1,46 @@
 # Azure AKS Helm Charts
 
-Automated deployment of official Helm charts to Azure Kubernetes Service (AKS) using GitHub Actions.
+Automated packaging and deployment of Helm charts to Azure Kubernetes Service (AKS) using GitHub Actions and GitHub Container Registry (GHCR).
 
 ## Overview
 
-This repository contains GitHub Actions workflows and configuration files for deploying and managing common infrastructure components on Azure Kubernetes Service using Helm charts. It serves as a centralized location for AKS infrastructure management, ensuring consistent deployment patterns and security practices across all your clusters.
+This repository contains GitHub Actions workflows and Helm charts for deploying and managing monitoring and infrastructure components on Azure Kubernetes Service. It provides:
 
-Each chart deployment is configured with:
+- **Manual-only workflows** for controlled operations
+- **Single-chart operations** for simplicity and predictability
+- **GHCR integration** for chart storage and distribution
+- **Pre-deployment verification** to ensure charts exist before deployment
+
+Each chart deployment includes:
 
 - Secure authentication using Azure Workload Identity
-- Standardized deployment patterns
-- Environment-specific configurations
-- Clear documentation and usage examples
+- Automatic namespace management
+- Health verification and status reporting
+- Clear success/failure feedback
 
 ## Included Charts
 
-Currently, this repository includes the following infrastructure components:
+This repository includes the following components:
 
-- **cert-manager**: Automates certificate management with Let's Encrypt integration and Azure DNS for DNS01 challenges
-
-*More charts will be added in the future.*
+- **grafana**: Visualization and monitoring dashboards (Port: 3000)
+- **prometheus**: Metrics collection and storage (Port: 9090)
+- **kube-state-metrics**: Kubernetes cluster metrics (Port: 8080)
+- **cert-manager**: Automated certificate management with Let's Encrypt integration
 
 ## Repository Structure
 
 ```plaintext
 /
-├── .github/workflows/    # GitHub Actions workflows
-│   └── deploy-cert-manager.yaml
+├── .github/workflows/           # GitHub Actions workflows
+│   ├── package-helm-charts.yaml    # Package charts to GHCR
+│   ├── deploy-helm-chart.yaml      # Deploy charts from GHCR
+│   └── deploy-cert-manager.yaml    # Deploy cert-manager
 │
-└── charts/               # Helm chart configurations 
-    └── cert-manager/     # cert-manager specific configurations
-        ├── cert-manager-values.yaml
-        ├── cluster-issuer.yaml
-        ├── cluster-issuer-staging.yaml
-        ├── test-certificate.yaml
-        └── README.md
+└── charts/                      # Helm charts
+    ├── grafana/                 # Grafana chart and dashboards
+    ├── prometheus/              # Prometheus chart and config
+    ├── kube-state-metrics/      # kube-state-metrics chart
+    └── cert-manager/            # cert-manager configurations
 ```
 
 ## Azure Identity Configuration
@@ -48,39 +54,57 @@ For production environments, consider using separate identities for workflow aut
 
 ## Usage
 
-All deployment workflows in this repository follow a similar pattern:
+This repository provides three main workflows:
 
-1. Workflows are triggered manually to ensure required inputs are provided
-2. Each workflow is specific to a chart and targets a single AKS cluster
-3. Configuration is maintained in the `charts/[chart-name]` directory
-4. Workflows use Azure Workload Identity for secure authentication
+1. **Package and Push Helm Charts to GHCR** - Packages individual charts and pushes to GitHub Container Registry
+2. **Deploy Helm Chart** - Deploys individual charts from GHCR to AKS
+3. **Deploy cert-manager** - Deploys cert-manager with Let's Encrypt integration
 
-### General Deployment Steps
+All workflows use **manual triggers only** for controlled, predictable operations.
 
-To deploy any chart:
+### Quick Start
 
-1. Go to the Actions tab in the GitHub repository
-2. Select the desired workflow
-3. Click "Run workflow"
-4. Enter the required parameters
-5. Click "Run workflow" to start the deployment
+1. **Package a chart**: Go to Actions → "Package and Push Helm Charts to GHCR" → Select chart → Run
+2. **Deploy a chart**: Go to Actions → "Deploy Helm Chart" → Enter cluster name and chart → Run
 
-### Available Charts
+### Workflow Features
 
-#### cert-manager
+- ✅ **Single-chart operations**: One chart per workflow run
+- ✅ **Pre-deployment verification**: Checks if chart exists in GHCR
+- ✅ **Automatic version detection**: Uses version from Chart.yaml
+- ✅ **Namespace management**: Creates namespaces if needed
+- ✅ **Health verification**: Waits for deployment completion
 
-**Purpose:** Automated TLS certificate management with Let's Encrypt integration
+### Available Workflows
 
-**Required Inputs:**
+#### Package and Push Helm Charts to GHCR
 
-- AKS cluster name
-- cert-manager version (optional, defaults to latest stable)
-- Environment: production or staging (optional, determines which ClusterIssuer to use)
+**Purpose:** Packages individual Helm charts and pushes to GitHub Container Registry
 
-**Features:**
+**Inputs:**
 
-- Configurable Let's Encrypt production/staging environments
-- Azure DNS integration for DNS-01 challenges
-- Azure Workload Identity for secure DNS management
+- Chart name (dropdown): grafana, prometheus, kube-state-metrics
 
-For detailed information on each chart, see the respective README files in the chart directories.
+#### Deploy Helm Chart
+
+**Purpose:** Deploys a single chart from GHCR to AKS with verification
+
+**Inputs:**
+
+- AKS cluster name (required)
+- Chart name (dropdown): grafana, prometheus, kube-state-metrics
+- Namespace (optional): grafana, prometheus, kube-state-metrics, monitoring
+- Create namespace (optional): true/false
+- Wait for deployment (optional): true/false
+
+#### Deploy cert-manager
+
+**Purpose:** Deploys cert-manager with Let's Encrypt integration
+
+**Inputs:**
+
+- AKS cluster name (required)
+- cert-manager version (optional)
+- Environment (optional): production/staging
+
+For detailed documentation, see [WORKFLOWS.md](./WORKFLOWS.md) and [QUICKSTART.md](./QUICKSTART.md).

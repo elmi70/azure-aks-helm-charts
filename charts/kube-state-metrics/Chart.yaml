@@ -1,0 +1,12 @@
+apiVersion: v2
+name: kube-state-metrics
+description: A custom Helm chart for kube-state-metrics based on official structure
+type: application
+version: 6.1.0
+appVersion: "2.16.0"
+home: https://github.com/kubernetes/kube-state-metrics/
+keywords:
+- metric
+- monitoring
+- prometheus
+- kubernetes

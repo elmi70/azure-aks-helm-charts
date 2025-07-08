@@ -1,0 +1,43 @@
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "grafana.fullname" . }}-vs
+  namespace: {{ .Release.Namespace }}
+spec:
+  hosts:
+  - {{ .Values.ingress.host | quote }}
+  gateways:
+  - {{ include "grafana.fullname" . }}-gateway
+  http:
+  {{- if .Values.tls.enabled }}
+  # Route all HTTP traffic to Grafana (cert-manager will create temporary ingress for ACME)
+  - match:
+    - port: 80
+    route:
+    - destination:
+        host: {{ .Values.grafana.service.name }}.{{ .Release.Namespace }}.svc.cluster.local
+        port:
+          number: {{ .Values.grafana.service.port | default 3000 }}
+  # Route HTTPS traffic to Grafana  
+  - match:
+    - port: 443
+    route:
+    - destination:
+        host: {{ .Values.grafana.service.name }}.{{ .Release.Namespace }}.svc.cluster.local
+        port:
+          number: {{ .Values.grafana.service.port | default 3000 }}
+    headers:
+      request:
+        set:
+          X-Forwarded-Proto: "https"
+          X-Forwarded-Port: "443"
+          X-Forwarded-Host: {{ .Values.ingress.host | quote }}
+  {{- else }}
+  # HTTP only routing
+  - route:
+    - destination:
+        host: {{ include "grafana.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+        port:
+          number: {{ .Values.grafana.service.port | default 3000 }}
+  {{- end }}

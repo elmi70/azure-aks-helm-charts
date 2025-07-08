@@ -1,0 +1,14 @@
+{{- if .Values.tls.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "grafana.fullname" . }}-tls
+  namespace: {{ .Values.istio.gatewayNamespace | default "aks-istio-ingress" }}
+spec:
+  secretName: {{ include "grafana.fullname" . }}-tls-secret
+  issuerRef:
+    name: {{ .Values.tls.issuerName | default "letsencrypt-prod" }}
+    kind: ClusterIssuer
+  dnsNames:
+  - {{ .Values.ingress.host }}
+{{- end }}

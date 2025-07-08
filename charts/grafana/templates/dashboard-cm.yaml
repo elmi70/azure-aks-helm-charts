@@ -1,0 +1,29 @@
+{{- $files := .Files }}
+{{- $root := . }}
+ 
+{{- $folders := list }}
+{{- range $path, $_ := $files.Glob "dashboards/**/*.json" }}
+  {{- $folder := dir $path | replace "dashboards/" "" | splitList "/" | first }}
+  {{- if not (has $folder $folders) }}
+    {{- $folders = append $folders $folder }}
+  {{- end }}
+{{- end }}
+ 
+{{- range $folder := $folders }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $root.Release.Name }}-{{ $folder }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- with $root.Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  {{- range $path, $fileContents := $files.Glob (printf "dashboards/%s/*.json" $folder) }}
+    {{- $filename := base $path }}
+  {{ $filename }}: |-
+{{ $files.Get $path | indent 4 }}
+  {{- end }}
+---
+{{- end }}

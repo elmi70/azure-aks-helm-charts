@@ -1,0 +1,80 @@
+# values.yaml
+grafana:
+  image:
+    repository: grafana/grafana
+    tag: "10.2.0"
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    name: grafana
+    port: 3000
+    targetPort: 3000
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  
+  # Fix permissions issue (similar to Prometheus)
+  securityContext:
+    runAsUser: 472
+    runAsGroup: 472
+    fsGroup: 472
+  
+  storage:
+    size: 5Gi
+    storageClass: ""
+  
+  # Default admin credentials (change these!)
+  adminUser: admin
+  adminPassword: "admin123"
+  
+  # Automatically configure Prometheus datasource
+  datasources:
+    prometheus:
+      name: Prometheus
+      type: prometheus
+      url: http://prometheus:9090
+      access: proxy
+      isDefault: true
+  
+serviceAccount:
+  create: true
+  name: "grafana"
+  annotations: {}
+  automount: true
+
+# No special RBAC needed for Grafana (it just reads from Prometheus)
+rbac:
+  create: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+labels:
+  app.kubernetes.io/instance: grafana
+  app.kubernetes.io/managed-by: Helm
+  app.kubernetes.io/component: grafana
+  app.kubernetes.io/part-of: grafana
+  app.kubernetes.io/created-by: Helm
+
+ingress:
+  host: "grafana.elmiabdullahi.com"
+
+tls:
+  enabled: true
+  issuerName: "letsencrypt-dns01-prod"  # References the ClusterIssuer
+
+istio:
+  gatewayNamespace: "aks-istio-ingress"
+
+# Optional VirtualService advanced configuration
+virtualService:
+  timeout: "30s"
+  retries:
+    attempts: 3
+    perTryTimeout: "10s"

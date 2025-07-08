@@ -1,0 +1,316 @@
+name: Deploy Helm Chart
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: 'AKS cluster name'
+        required: true
+        type: string
+      chart_name:
+        description: 'Helm chart to deploy'
+        required: true
+        type: choice
+        options:
+          - grafana
+          - prometheus
+          - kube-state-metrics
+      namespace:
+        description: 'Kubernetes namespace for deployment'
+        required: false
+        default: 'grafana'
+        type: choice
+        options:
+          - grafana
+          - prometheus
+          - kube-state-metrics
+          - monitoring
+      create_namespace:
+        description: 'Create namespace if it does not exist'
+        required: false
+        default: true
+        type: boolean
+      wait_for_deployment:
+        description: 'Wait for deployment to complete'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+
+# Prevent concurrent deployments to the same cluster
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.cluster_name || 'default' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
+      
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Install yq
+      run: |
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod +x /usr/local/bin/yq
+    
+    - name: Detect chart version
+      run: |
+        CHART_NAME="${{ github.event.inputs.chart_name }}"
+        CHART_PATH="charts/$CHART_NAME"
+        
+        if [ ! -f "$CHART_PATH/Chart.yaml" ]; then
+          echo "❌ Chart.yaml not found at $CHART_PATH/Chart.yaml"
+          exit 1
+        fi
+        
+        # Extract chart metadata using yq
+        CHART_VERSION=$(yq '.version' "$CHART_PATH/Chart.yaml")
+        APP_VERSION=$(yq '.appVersion // "unknown"' "$CHART_PATH/Chart.yaml")
+        
+        if [ -z "$CHART_VERSION" ] || [ "$CHART_VERSION" == "null" ]; then
+          echo "❌ Could not extract version from $CHART_PATH/Chart.yaml"
+          exit 1
+        fi
+        
+        echo "📊 Chart metadata:"
+        echo "  Name: $CHART_NAME"
+        echo "  Version: $CHART_VERSION"
+        echo "  App Version: $APP_VERSION"
+        
+        # Set environment variables
+        {
+          echo "CHART_VERSION=$CHART_VERSION"
+          echo "APP_VERSION=$APP_VERSION"
+        } >> $GITHUB_ENV
+        
+        echo "📦 Detected chart version: $CHART_VERSION"
+    
+    - name: Set deployment variables
+      run: |
+        # Prevent accidental output of secrets
+        set +x
+        
+        CLUSTER_NAME="${{ github.event.inputs.cluster_name }}"
+        CHART_NAME="${{ github.event.inputs.chart_name }}"
+        # CHART_VERSION is already set from the previous step
+        NAMESPACE="${{ github.event.inputs.namespace || 'grafana' }}"
+        CREATE_NAMESPACE="${{ github.event.inputs.create_namespace || 'true' }}"
+        WAIT_FOR_DEPLOYMENT="${{ github.event.inputs.wait_for_deployment || 'true' }}"
+        
+        {
+          # Set GitHub environment variables
+          echo "CLUSTER_NAME=$CLUSTER_NAME"
+          echo "CHART_NAME=$CHART_NAME"
+          # CHART_VERSION already set in previous step
+          echo "NAMESPACE=$NAMESPACE"
+          echo "CREATE_NAMESPACE=$CREATE_NAMESPACE"
+          echo "WAIT_FOR_DEPLOYMENT=$WAIT_FOR_DEPLOYMENT"
+        } >> $GITHUB_ENV
+        
+        # Log configuration
+        echo "🔧 Deployment Configuration:"
+        echo "  Cluster: $CLUSTER_NAME"
+        echo "  Chart: $CHART_NAME"
+        echo "  Version: $CHART_VERSION"
+        echo "  Namespace: $NAMESPACE"
+    
+    - name: Azure Login using Workload Identity
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    
+    - name: Setup kubelogin
+      uses: azure/use-kubelogin@v1
+      with:
+        kubelogin-version: 'v0.0.34'
+    
+    - name: Get AKS credentials
+      run: |
+        az aks get-credentials \
+          --resource-group ${{ vars.RESOURCE_GROUP }} \
+          --name $CLUSTER_NAME \
+          --overwrite-existing
+        
+        # Convert kubeconfig to use kubelogin for Azure AD authentication
+        kubelogin convert-kubeconfig -l azurecli
+    
+    - name: Verify cluster connection
+      run: |
+        echo "🔗 Verifying cluster connection..."
+        kubectl get nodes --no-headers | wc -l | xargs echo "Connected to cluster with" "nodes"
+        echo "✅ Cluster connection verified"
+    
+    - name: Setup Helm
+      uses: azure/setup-helm@v4.3.0
+      with:
+        version: 'v3.18.3'
+    
+    - name: Login to GitHub Container Registry
+      run: |
+        echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} --username ${{ github.actor }} --password-stdin
+    
+    - name: Check chart availability in registry
+      run: |
+        echo "🔍 Checking if chart $CHART_NAME version $CHART_VERSION exists in registry..."
+        
+        # Try to pull chart metadata to check if it exists
+        CHART_URL="oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts/$CHART_NAME"
+        
+        if ! helm show chart "$CHART_URL" --version "$CHART_VERSION" >/dev/null 2>&1; then
+          echo "❌ Chart $CHART_NAME version $CHART_VERSION not found in registry"
+          echo ""
+          echo "📋 To resolve this issue:"
+          echo "1. Go to Actions → Package Helm Charts"
+          echo "2. Select '$CHART_NAME' from the dropdown"
+          echo "3. Run the workflow to package and publish the chart"
+          echo "4. Then retry this deployment"
+          echo ""
+          echo "🔗 Package workflow URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/package-helm-charts.yaml"
+          echo ""
+          echo "💡 The chart needs to be packaged before it can be deployed from the registry."
+          exit 1
+        fi
+        
+        echo "✅ Chart $CHART_NAME version $CHART_VERSION found in registry"
+    
+    - name: Prepare namespace
+      run: |
+        if [ "$CREATE_NAMESPACE" == "true" ]; then
+          echo "📦 Creating namespace if it doesn't exist: $NAMESPACE"
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          echo "✅ Namespace $NAMESPACE ready"
+        else
+          echo "🔍 Checking if namespace exists: $NAMESPACE"
+          if ! kubectl get namespace $NAMESPACE >/dev/null 2>&1; then
+            echo "❌ Namespace $NAMESPACE does not exist and create_namespace is false"
+            exit 1
+          fi
+          echo "✅ Namespace $NAMESPACE exists"
+        fi
+    
+    - name: Deploy selected chart
+      run: |
+        echo "🚀 Deploying $CHART_NAME version $CHART_VERSION to namespace $NAMESPACE..."
+        
+        # Determine wait flag
+        WAIT_FLAG=""
+        if [ "$WAIT_FOR_DEPLOYMENT" == "true" ]; then
+          WAIT_FLAG="--wait --timeout=10m"
+        fi
+        
+        # Deploy the selected chart
+        set -e
+        if ! helm upgrade --install $CHART_NAME \
+          "oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/helm-charts/$CHART_NAME" \
+          --version $CHART_VERSION \
+          --namespace $NAMESPACE \
+          $WAIT_FLAG; then
+          echo "❌ $CHART_NAME deployment failed"
+          kubectl get events --sort-by=.metadata.creationTimestamp -n $NAMESPACE
+          exit 1
+        fi
+        
+        echo "✅ $CHART_NAME deployed successfully"
+    
+    - name: Verify deployment
+      run: |
+        echo "🔍 Verifying $CHART_NAME deployment in namespace: $NAMESPACE"
+        
+        # List all resources in the namespace
+        echo "📋 Resources in $NAMESPACE namespace:"
+        kubectl get all -n $NAMESPACE
+        
+        echo ""
+        echo "📋 Helm releases in $NAMESPACE namespace:"
+        helm list -n $NAMESPACE
+        
+        # Check if the Helm release exists and get its status
+        echo ""
+        echo "🏥 Helm release status for $CHART_NAME:"
+        if helm status $CHART_NAME -n $NAMESPACE >/dev/null 2>&1; then
+          helm status $CHART_NAME -n $NAMESPACE
+          echo "✅ Helm release $CHART_NAME found and status retrieved"
+        else
+          echo "❌ Helm release $CHART_NAME not found"
+          exit 1
+        fi
+        
+        # Wait for any pods that might be associated with this deployment
+        echo ""
+        echo "🏥 Pod health check:"
+        
+        # Check for pods in the namespace
+        if kubectl get pods -n $NAMESPACE --no-headers 2>/dev/null | grep -q .; then
+          echo "📍 Found pods in namespace, checking readiness..."
+          kubectl get pods -n $NAMESPACE
+          
+          # Try to wait for pods with common label selectors
+          for LABEL_SELECTOR in "app.kubernetes.io/name=$CHART_NAME" "app=$CHART_NAME" "release=$CHART_NAME"; do
+            if kubectl get pods -l "$LABEL_SELECTOR" -n $NAMESPACE --no-headers 2>/dev/null | grep -q .; then
+              echo "⏳ Waiting for pods with selector: $LABEL_SELECTOR"
+              kubectl wait --for=condition=Ready pods -l "$LABEL_SELECTOR" -n $NAMESPACE --timeout=3m || true
+              break
+            fi
+          done
+        else
+          echo "ℹ️  No pods found in namespace (normal for some chart types)"
+        fi
+    
+    - name: Get service information
+      run: |
+        echo "🌐 Service Information:"
+        echo "======================"
+        
+        echo "📋 Services in $NAMESPACE namespace:"
+        kubectl get svc -n $NAMESPACE
+        
+        echo ""
+        echo "💡 Access any service using port-forward:"
+        echo "kubectl port-forward -n $NAMESPACE svc/SERVICE_NAME LOCAL_PORT:SERVICE_PORT"
+    
+    - name: Create deployment summary
+      run: |
+        echo "## 🎉 Chart Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+        echo "- **Cluster**: $CLUSTER_NAME" >> $GITHUB_STEP_SUMMARY
+        echo "- **Chart**: $CHART_NAME" >> $GITHUB_STEP_SUMMARY
+        echo "- **Chart Version**: $CHART_VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "- **App Version**: $APP_VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "- **Namespace**: $NAMESPACE" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Helm Release" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        helm list -n $NAMESPACE >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Resources" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        kubectl get all -n $NAMESPACE >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Quick Access" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "# View resources" >> $GITHUB_STEP_SUMMARY
+        echo "kubectl get all -n $NAMESPACE" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# Port forward to services (adjust service name and ports)" >> $GITHUB_STEP_SUMMARY
+        echo "kubectl port-forward -n $NAMESPACE svc/SERVICE_NAME LOCAL_PORT:SERVICE_PORT" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# Uninstall the chart" >> $GITHUB_STEP_SUMMARY
+        echo "helm uninstall $CHART_NAME -n $NAMESPACE" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
