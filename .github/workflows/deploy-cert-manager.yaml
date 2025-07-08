@@ -105,12 +105,20 @@ jobs:
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     
+    - name: Setup kubelogin
+      uses: azure/use-kubelogin@v1
+      with:
+        kubelogin-version: 'v0.0.34'
+    
     - name: Get AKS credentials
       run: |
         az aks get-credentials \
           --resource-group ${{ vars.RESOURCE_GROUP }} \
           --name $CLUSTER_NAME \
           --overwrite-existing
+        
+        # Convert kubeconfig to use kubelogin for Azure AD authentication
+        kubelogin convert-kubeconfig -l azurecli
     
     - name: Verify cluster connection
       run: |
