@@ -2,5 +2,5 @@ apiVersion: v2
 name: prometheus
 description: A simple Helm chart for Prometheus
 type: application
-version: 0.1.0
+version: 2.0.0
 appVersion: "v3.4.0"
