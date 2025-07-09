@@ -1,6 +1,6 @@
 {{- $files := .Files }}
 {{- $root := . }}
- 
+
 {{- $folders := list }}
 {{- range $path, $_ := $files.Glob "dashboards/**/*.json" }}
   {{- $folder := dir $path | replace "dashboards/" "" | splitList "/" | first }}
@@ -8,7 +8,7 @@
     {{- $folders = append $folders $folder }}
   {{- end }}
 {{- end }}
- 
+
 {{- range $folder := $folders }}
 apiVersion: v1
 kind: ConfigMap

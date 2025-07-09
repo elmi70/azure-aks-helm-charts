@@ -19,7 +19,7 @@ spec:
         host: {{ .Values.grafana.service.name }}.{{ .Release.Namespace }}.svc.cluster.local
         port:
           number: {{ .Values.grafana.service.port | default 3000 }}
-  # Route HTTPS traffic to Grafana  
+  # Route HTTPS traffic to Grafana
   - match:
     - port: 443
     route:

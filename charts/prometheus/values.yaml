@@ -4,12 +4,12 @@ prometheus:
     repository: prom/prometheus
     tag: v3.4.0
     pullPolicy: IfNotPresent
-  
+
   service:
     type: ClusterIP
     port: 9090
     targetPort: 9090
-  
+
   resources:
     limits:
       cpu: 500m
@@ -17,7 +17,7 @@ prometheus:
     requests:
       cpu: 250m
       memory: 256Mi
-  
+
   securityContext:
     runAsUser: 65534
     runAsGroup: 65534
@@ -25,14 +25,14 @@ prometheus:
   storage:
     size: 10Gi
     storageClass: "default"
-  
+
   retention: "15d"
-  
+
   config:
     global:
       scrape_interval: 15s
       evaluation_interval: 15s
-    
+
     scrape_configs:
       - job_name: 'prometheus'
         static_configs:
@@ -41,7 +41,7 @@ prometheus:
       - job_name: 'node-exporter'
         static_configs:
           - targets: ['node-exporter-prometheus-node-exporter.node-exporter.svc.cluster.local:9100']
- 
+
       - job_name: 'kube-state-metrics'
         static_configs:
           - targets: ['kube-state-metrics.kube-state-metrics.svc.cluster.local:8080']
@@ -98,10 +98,12 @@ prometheus:
         - source_labels: [__meta_kubernetes_pod_name]
           target_label: pod
         - source_labels: [__meta_kubernetes_service_name]
-          target_label: service      
+          target_label: service
 serviceAccount:
   create: true
   name: ""
+  annotations: {}
+  automount: true
 fullnameOverride: "prometheus"
 ingress:
   enabled: false

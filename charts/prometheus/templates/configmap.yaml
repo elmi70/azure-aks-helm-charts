@@ -9,6 +9,6 @@ data:
   prometheus.yml: |
     global:
       {{- toYaml .Values.prometheus.config.global | nindent 6 }}
-    
+
     scrape_configs:
       {{- toYaml .Values.prometheus.config.scrape_configs | nindent 6 }}

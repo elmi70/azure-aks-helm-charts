@@ -4,13 +4,13 @@ grafana:
     repository: grafana/grafana
     tag: "10.2.0"
     pullPolicy: IfNotPresent
-  
+
   service:
     type: ClusterIP
     name: grafana
     port: 3000
     targetPort: 3000
-  
+
   resources:
     limits:
       cpu: 500m
@@ -18,22 +18,22 @@ grafana:
     requests:
       cpu: 250m
       memory: 256Mi
-  
+
   # Fix permissions issue (similar to Prometheus)
   securityContext:
     runAsUser: 472
     runAsGroup: 472
     fsGroup: 472
-  
+
   storage:
     size: 5Gi
     storageClass: ""
-  
+
   # Default admin credentials (used only when keyVault.enabled is false)
   # For production, enable Key Vault integration below
   adminUser: admin
   adminPassword: "admin123"
-  
+
   # Automatically configure Prometheus datasource
   datasources:
     prometheus:
@@ -42,7 +42,7 @@ grafana:
       url: http://prometheus:9090
       access: proxy
       isDefault: true
-  
+
 serviceAccount:
   create: true
   name: "grafana"
@@ -51,10 +51,10 @@ serviceAccount:
 
 # Azure Key Vault integration for secure credential management
 keyVault:
-  enabled: false  # Set to true to use Azure Key Vault for admin credentials
-  name: ""  # Your Azure Key Vault name (e.g., "my-keyvault")
-  tenantId: ""  # Your Azure tenant ID
-  userAssignedClientID: ""  # Workload Identity Client ID for Key Vault access
+  enabled: true
+  name: "aks-cluster-kv-somguru"
+  tenantId: "beddf09b-93ad-46fd-afcc-44fc87d68488"
+  userAssignedClientID: "c0cc5389-028b-4d03-a75c-ba57d4e96a87"
   secrets:
     adminPassword: "grafana-admin-password"  # Secret name in Key Vault for admin password
 
