@@ -2,7 +2,7 @@ apiVersion: v2
 name: grafana
 description: A simple Grafana Helm chart for container monitoring
 type: application
-version: 2.0.0
+version: 3.0.0
 appVersion: "10.2.0"
 keywords:
   - grafana
