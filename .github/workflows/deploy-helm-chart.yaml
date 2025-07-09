@@ -190,6 +190,14 @@ jobs:
         if [ "$CREATE_NAMESPACE" == "true" ]; then
           echo "📦 Creating namespace if it doesn't exist: $NAMESPACE"
           kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Add Istio sidecar injection label for Grafana namespace
+          if [ "$CHART_NAME" == "grafana" ]; then
+            echo "🔧 Enabling Istio sidecar injection for Grafana namespace..."
+            kubectl label namespace $NAMESPACE istio-injection=enabled --overwrite
+            echo "✅ Istio sidecar injection enabled for namespace $NAMESPACE"
+          fi
+          
           echo "✅ Namespace $NAMESPACE ready"
         else
           echo "🔍 Checking if namespace exists: $NAMESPACE"
@@ -197,6 +205,14 @@ jobs:
             echo "❌ Namespace $NAMESPACE does not exist and create_namespace is false"
             exit 1
           fi
+          
+          # Add Istio sidecar injection label for Grafana namespace even if not creating it
+          if [ "$CHART_NAME" == "grafana" ]; then
+            echo "🔧 Ensuring Istio sidecar injection is enabled for Grafana namespace..."
+            kubectl label namespace $NAMESPACE istio-injection=enabled --overwrite
+            echo "✅ Istio sidecar injection enabled for namespace $NAMESPACE"
+          fi
+          
           echo "✅ Namespace $NAMESPACE exists"
         fi
     
