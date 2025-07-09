@@ -29,7 +29,8 @@ grafana:
     size: 5Gi
     storageClass: ""
   
-  # Default admin credentials (change these!)
+  # Default admin credentials (used only when keyVault.enabled is false)
+  # For production, enable Key Vault integration below
   adminUser: admin
   adminPassword: "admin123"
   
@@ -47,6 +48,15 @@ serviceAccount:
   name: "grafana"
   annotations: {}
   automount: true
+
+# Azure Key Vault integration for secure credential management
+keyVault:
+  enabled: false  # Set to true to use Azure Key Vault for admin credentials
+  name: ""  # Your Azure Key Vault name (e.g., "my-keyvault")
+  tenantId: ""  # Your Azure tenant ID
+  userAssignedClientID: ""  # Workload Identity Client ID for Key Vault access
+  secrets:
+    adminPassword: "grafana-admin-password"  # Secret name in Key Vault for admin password
 
 # No special RBAC needed for Grafana (it just reads from Prometheus)
 rbac:

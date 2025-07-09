@@ -40,11 +40,11 @@ prometheus:
 
       - job_name: 'node-exporter'
         static_configs:
-          - targets: ['node-exporter-prometheus-node-exporter.monitoring.svc.cluster.local:9100']
+          - targets: ['node-exporter-prometheus-node-exporter.node-exporter.svc.cluster.local:9100']
  
       - job_name: 'kube-state-metrics'
         static_configs:
-          - targets: ['kube-state-metrics.monitoring.svc.cluster.local:8080']
+          - targets: ['kube-state-metrics.kube-state-metrics.svc.cluster.local:8080']
       # cAdvisor - container resource metrics
       - job_name: 'cadvisor'
         kubernetes_sd_configs:

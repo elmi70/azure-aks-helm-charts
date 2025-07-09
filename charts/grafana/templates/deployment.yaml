@@ -14,6 +14,9 @@ spec:
     metadata:
       labels:
         {{- include "grafana.selectorLabels" . | nindent 8 }}
+        {{- if .Values.keyVault.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
     spec:
       {{- with .Values.grafana.securityContext }}
       securityContext:
@@ -29,10 +32,20 @@ spec:
               containerPort: {{ .Values.grafana.service.targetPort }}
               protocol: TCP
           env:
+            {{- if .Values.keyVault.enabled }}
+            - name: GF_SECURITY_ADMIN_USER
+              value: {{ .Values.grafana.adminUser | quote }}
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "grafana.fullname" . }}-admin-secret
+                  key: admin-password
+            {{- else }}
             - name: GF_SECURITY_ADMIN_USER
               value: {{ .Values.grafana.adminUser | quote }}
             - name: GF_SECURITY_ADMIN_PASSWORD
               value: {{ .Values.grafana.adminPassword | quote }}
+            {{- end }}
             - name: GF_PATHS_DATA
               value: /var/lib/grafana
             - name: GF_PATHS_LOGS
@@ -74,6 +87,11 @@ spec:
             - name: dashboards-prometheus
               mountPath: /var/lib/grafana/dashboards/prometheus
               readOnly: true
+            {{- if .Values.keyVault.enabled }}
+            - name: secrets-store
+              mountPath: "/mnt/secrets-store"
+              readOnly: true
+            {{- end }}
       volumes:
         - name: storage
           persistentVolumeClaim:
@@ -90,6 +108,14 @@ spec:
         - name: dashboards-prometheus
           configMap:
             name: {{ .Release.Name }}-prometheus
+        {{- if .Values.keyVault.enabled }}
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "grafana.fullname" . }}-kv-secrets
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
