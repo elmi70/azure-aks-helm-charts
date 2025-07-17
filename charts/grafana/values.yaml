@@ -13,11 +13,11 @@ grafana:
 
   resources:
     limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
-      cpu: 250m
+      cpu: 200m
       memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
 
   # Fix permissions issue (similar to Prometheus)
   securityContext:
@@ -51,7 +51,7 @@ serviceAccount:
 
 # Azure Key Vault integration for secure credential management
 keyVault:
-  enabled: true
+  enabled: false  # Temporarily disabled for troubleshooting
   name: "aks-cluster-kv-somguru"
   tenantId: "beddf09b-93ad-46fd-afcc-44fc87d68488"
   userAssignedClientID: "c0cc5389-028b-4d03-a75c-ba57d4e96a87"
@@ -77,7 +77,7 @@ ingress:
 
 tls:
   enabled: true
-  issuerName: "letsencrypt-dns01-prod"  # References the ClusterIssuer
+  issuerName: "letsencrypt-prod"  # References the ClusterIssuer
 
 istio:
   gatewayNamespace: "aks-istio-ingress"
