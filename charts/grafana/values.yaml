@@ -51,10 +51,10 @@ serviceAccount:
 
 # Azure Key Vault integration for secure credential management
 keyVault:
-  enabled: false  # Temporarily disabled for troubleshooting
+  enabled: true  # Enable Key Vault integration
   name: "aks-cluster-kv-somguru"
   tenantId: "beddf09b-93ad-46fd-afcc-44fc87d68488"
-  userAssignedClientID: "c0cc5389-028b-4d03-a75c-ba57d4e96a87"
+  userAssignedClientID: "a28a24c7-f71e-4c26-b854-a890e23c601d"
   secrets:
     adminPassword: "grafana-admin-password"  # Secret name in Key Vault for admin password
 
