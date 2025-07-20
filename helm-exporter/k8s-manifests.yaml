@@ -1,0 +1,133 @@
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: helm-exporter
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: helm-exporter
+rules:
+# Helm releases are stored as secrets
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+# Helm may also use configmaps
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list"]
+# Access to namespaces for listing
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list"]
+# Access to pods for release status
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+# Access to deployments, services for release status
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: helm-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: helm-exporter
+subjects:
+- kind: ServiceAccount
+  name: helm-exporter
+  namespace: monitoring
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helm-exporter
+  namespace: monitoring
+  labels:
+    app: helm-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: helm-exporter
+  template:
+    metadata:
+      labels:
+        app: helm-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: helm-exporter
+      containers:
+      - name: helm-exporter
+        image: ghcr.io/elmi70/azure-aks-helm-charts/helm-exporter:latest
+        ports:
+        - containerPort: 8080
+          name: metrics
+        env:
+        - name: LOG_LEVEL
+          value: "INFO"
+        args:
+        - "--port=8080"
+        - "--interval=60"
+        - "--log-level=INFO"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop:
+            - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: helm-exporter
+  namespace: monitoring
+  labels:
+    app: helm-exporter
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+spec:
+  selector:
+    app: helm-exporter
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: metrics

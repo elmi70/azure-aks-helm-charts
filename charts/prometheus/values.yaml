@@ -99,6 +99,14 @@ prometheus:
           target_label: pod
         - source_labels: [__meta_kubernetes_service_name]
           target_label: service
+      
+      # Helm Exporter - for Helm release metrics
+      - job_name: 'helm-exporter'
+        static_configs:
+          - targets: ['helm-exporter.monitoring.svc.cluster.local:8080']
+        scrape_interval: 60s
+        metrics_path: '/metrics'
+
 serviceAccount:
   create: true
   name: ""
