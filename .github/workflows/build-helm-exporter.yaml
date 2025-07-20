@@ -18,7 +18,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}/helm-exporter
+  IMAGE_NAME: elmi70/helm-exporter
 
 jobs:
   build-and-push:

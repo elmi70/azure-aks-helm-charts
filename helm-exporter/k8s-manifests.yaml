@@ -76,7 +76,7 @@ spec:
       serviceAccountName: helm-exporter
       containers:
       - name: helm-exporter
-        image: ghcr.io/elmi70/azure-aks-helm-charts/helm-exporter:latest
+        image: ghcr.io/elmi70/helm-exporter:latest
         ports:
         - containerPort: 8080
           name: metrics

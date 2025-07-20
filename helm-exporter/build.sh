@@ -8,7 +8,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-IMAGE_NAME="ghcr.io/elmi70/azure-aks-helm-charts/helm-exporter"
+IMAGE_NAME="ghcr.io/elmi70/helm-exporter"
 TAG="${1:-latest}"
 FULL_IMAGE="${IMAGE_NAME}:${TAG}"
 
