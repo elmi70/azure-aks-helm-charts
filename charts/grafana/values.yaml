@@ -54,7 +54,7 @@ keyVault:
   enabled: true  # Enable Key Vault integration
   name: "aks-cluster-kv-somguru"
   tenantId: "beddf09b-93ad-46fd-afcc-44fc87d68488"
-  userAssignedClientID: "a28a24c7-f71e-4c26-b854-a890e23c601d"
+  userAssignedClientID: "9a105794-5989-4447-9b0a-905f62b1e8a9"
   secrets:
     adminPassword: "grafana-admin-password"  # Secret name in Key Vault for admin password
 
